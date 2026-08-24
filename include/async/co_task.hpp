@@ -1,8 +1,8 @@
 #pragma once 
 
-#include "task_void.hpp"
-#include "task_value.hpp"
-#include "await_time.hpp"
+#include <async/co_task_void.hpp>
+#include <async/co_task_value.hpp>
+#include <async/co_await_time.hpp>
 
 namespace async
 {
@@ -21,3 +21,7 @@ namespace async
     template<typename T = void>
     using task = task_t<T>::T;
 }
+
+// Async task
+template<typename Type>
+using atask = async::task<Type>;

@@ -1,6 +1,6 @@
-#pragma once
+﻿#pragma once
 
-#include "task_base.hpp"
+#include "co_task_base.hpp"
 
 namespace async
 {
@@ -29,9 +29,9 @@ namespace async
         auto operator co_await() const & noexcept;
 
     public:
-        Type&& get();
-
         void then(std::function<void(Type&& value)>);
+        void error(std::function<void(std::exception&&)>);
+        Type&& get();
     private:
         handle_type handle;
     };
@@ -39,7 +39,8 @@ namespace async
     template<typename Type>
     inline task_value<Type>::~task_value<Type>() 
     {
-        handle.destroy();
+        // free coroutine handle
+        handle.promise().free();
     }
 
     template<typename Type>
@@ -125,13 +126,13 @@ namespace async
             std::rethrow_exception(p.exception_);
         }
 
-        p.then = [func, &p](){
+        p.next = [func, &p](){
             //check after runing coroutine
             if(p.exception_){
                 std::rethrow_exception(p.exception_);
             }
 
-            fun(std::move(*p.value));
+            func(std::move(*p.value));
         };
     }
 }

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "task_base.hpp"
+#include <async/co_task_base.hpp>
 
 namespace async
 {

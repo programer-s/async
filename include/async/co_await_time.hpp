@@ -1,14 +1,30 @@
-#pragma once
+﻿#pragma once
 
-#include "awaitable.hpp"
+#include <thread>
+#include "co_awaitable.hpp"
+
+#ifdef VSN_WEB_BUILD
+    #include <emscripten.h>
+#else
+    #include "trd_scheduler.hpp"
+#endif
 
 namespace async 
 {
     struct Runner
     {
+        static void Invoke(void* address)
+        {
+            auto h = std::coroutine_handle<>::from_address(address);
+            if(h && !h.done()){
+                h.resume();
+            }
+        }
+
         template<class TimePoint>
         static inline void Run(std::coroutine_handle<> h, TimePoint tp)
         {
+            /* // example run with thread 
             std::jthread jt([h, tp](){
                 std::this_thread::sleep_until(tp);
                 if(h && !h.done()){
@@ -17,11 +33,30 @@ namespace async
             });
 
             jt.detach();
+            */
+
+            #if defined(VSN_WEB_BUILD)
+            using sc = std::chrono::system_clock;
+            auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(tp - sc::now());
+            size_t duration = ms.count();
+
+            EM_ASM({
+                setTimeout(()=>{
+                    wasmTable.get($0).apply(null, [$1])
+                }, $2);
+            }, &Invoke, h.address(), duration);
+            #else
+                static Scheduler sch; sch.run_after([h](){
+                    if(h && !h.done()){
+                        h.resume();
+                    }
+                }, tp);
+           #endif
         }
     };
 
 
-    template<typename _Rep, typename _Period>
+    template<typename _Runner, typename _Rep, typename _Period>
     inline auto after(const std::chrono::duration<_Rep, _Period>& dt)
     {
         using sc = std::chrono::system_clock;
@@ -34,7 +69,7 @@ namespace async
 
             void await_suspend(std::coroutine_handle<> h) noexcept 
             {
-                Runner::Run(h, this->tp);
+                _Runner::Run(h, this->tp);
             }
 
             awaitable(sc::time_point time)
@@ -47,7 +82,14 @@ namespace async
         return awaitable{tp};
     }
 
-    template<typename T, typename _Rep, typename _Period>
+
+    template<typename _Rep, typename _Period>
+    inline auto after(const std::chrono::duration<_Rep, _Period>& dt)
+    {
+        return after<Runner,_Rep,_Period>(dt);
+    }
+
+    template<typename T, typename _Runner, typename _Rep, typename _Period>
     inline auto after(const std::chrono::duration<_Rep, _Period>& dt, T&& value)
     {
         using sc = std::chrono::system_clock;
@@ -60,7 +102,7 @@ namespace async
 
             void await_suspend(std::coroutine_handle<> h) noexcept 
             {
-                Runner::Run(h, this->tp);
+                _Runner::Run(h, this->tp);
             }
 
             awaitable(T&& value, sc::time_point time)
@@ -72,5 +114,11 @@ namespace async
     };
 
     return awaitable{std::move(value), tp};
+    }
+
+    template<typename T, typename _Rep, typename _Period>
+    inline auto after(const std::chrono::duration<_Rep, _Period>& dt, T&& value)
+    {
+        return after<T,Runner,_Rep,_Period>(dt, std::move(value));
     }
 }
