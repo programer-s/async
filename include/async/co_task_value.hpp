@@ -31,7 +31,7 @@ namespace async
     public:
         void then(std::function<void(Type&& value)>);
         void error(std::function<void(std::exception&&)>);
-        Type&& get();
+        Type get();
     private:
         handle_type handle;
     };
@@ -90,7 +90,7 @@ namespace async
     }
 
     template<typename Type>
-    inline Type&& task_value<Type>::get()
+    inline Type task_value<Type>::get()
     {
         auto& p = handle.promise();
         std::unique_lock lk(p.mutex);
@@ -112,7 +112,7 @@ namespace async
             std::rethrow_exception(p.exception_);
         }
 
-        return *p.value;
+        return std::move(*p.value);
     }
 
     template<typename Type>
@@ -135,4 +135,5 @@ namespace async
             func(std::move(*p.value));
         };
     }
+
 }
