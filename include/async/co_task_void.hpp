@@ -2,6 +2,9 @@
 
 #include <async/co_task_base.hpp>
 
+#include <type_traits>
+#include <utility>
+
 namespace async
 {
     struct task_void
@@ -26,7 +29,8 @@ namespace async
         auto operator co_await() const & noexcept;
 
     public:
-        void then(std::function<void()>);
+        template<detail::invocable_with<> Func>
+        auto then(Func&& func);
         void error(std::function<void(std::exception&&)>);
         void get();
     private:
@@ -80,25 +84,50 @@ namespace async
         return _awaitable{handle.promise()};
     }
 
-    inline void task_void::then(std::function<void()> func)
+    namespace detail
     {
-        auto& p = handle.promise();
-        std::unique_lock lk(p.mutex);
+        struct void_handle_awaitable
+        {
+            task_void::handle_type h;
 
-        //check befor runing coroutine
-        if(p.exception_){
-            std::rethrow_exception(p.exception_);
-        }
-        
-        p.next = [func, &p](){
-
-            //check after runing coroutine
-            if(p.exception_){
-                std::rethrow_exception(p.exception_);
+            bool await_ready() noexcept {
+                std::unique_lock lk(h.promise().mutex);
+                return h.done() || h.promise().exception_;
             }
 
-            func();
+            void await_resume() {
+                if(h.promise().exception_){
+                    std::rethrow_exception(h.promise().exception_);
+                }
+            }
+
+            void await_suspend(std::coroutine_handle<> ch) noexcept {
+                std::unique_lock lk(h.promise().mutex);
+                h.promise().next = [ch](){
+                    ch.resume();
+                };
+            }
         };
+
+        template<detail::invocable_with<> Func>
+        auto then_impl(task_void::handle_type h, Func f)
+            -> then_task_t<std::invoke_result_t<Func>>
+        {
+            co_await void_handle_awaitable{h};
+            if constexpr (std::is_void_v<std::invoke_result_t<Func>>) {
+                f();
+                co_return;
+            } else {
+                co_return f();
+            }
+        }
+    }
+
+    template<detail::invocable_with<> Func>
+    inline auto task_void::then(Func&& func)
+    {
+        using F = std::decay_t<Func>;
+        return detail::then_impl(handle, F(std::forward<Func>(func)));
     }
 
     inline void task_void::get()

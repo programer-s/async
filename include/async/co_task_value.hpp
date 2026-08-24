@@ -2,6 +2,9 @@
 
 #include "co_task_base.hpp"
 
+#include <type_traits>
+#include <utility>
+
 namespace async
 {
     template<typename Type> 
@@ -29,7 +32,8 @@ namespace async
         auto operator co_await() const & noexcept;
 
     public:
-        void then(std::function<void(Type&& value)>);
+        template<detail::invocable_with<Type&&> Func>
+        auto then(Func&& func);
         void error(std::function<void(std::exception&&)>);
         Type get();
     private:
@@ -115,25 +119,54 @@ namespace async
         return std::move(*p.value);
     }
 
-    template<typename Type>
-    void task_value<Type>::then(std::function<void(Type&& value)> func)
+    namespace detail
     {
-        auto& p = handle.promise();
-        std::unique_lock lk(p.mutex);
+        template<typename Type>
+        struct value_handle_awaitable
+        {
+            typename task_value<Type>::handle_type h;
 
-        //check befor runing coroutine
-        if(p.exception_){
-            std::rethrow_exception(p.exception_);
-        }
-
-        p.next = [func, &p](){
-            //check after runing coroutine
-            if(p.exception_){
-                std::rethrow_exception(p.exception_);
+            bool await_ready() noexcept {
+                std::unique_lock lk(h.promise().mutex);
+                return h.promise().value || h.promise().exception_;
             }
 
-            func(std::move(*p.value));
+            Type&& await_resume() {
+                if(h.promise().exception_){
+                    std::rethrow_exception(h.promise().exception_);
+                }
+
+                return std::move(h.promise().value.value());
+            }
+
+            void await_suspend(std::coroutine_handle<> ch) noexcept {
+                std::unique_lock lk(h.promise().mutex);
+                h.promise().next = [ch](){
+                    ch.resume();
+                };
+            }
         };
+
+        template<typename Type, detail::invocable_with<Type&&> Func>
+        auto then_impl(typename task_value<Type>::handle_type h, Func f)
+            -> then_task_t<std::invoke_result_t<Func, Type&&>>
+        {
+            Type value = co_await value_handle_awaitable<Type>{h};
+            if constexpr (std::is_void_v<std::invoke_result_t<Func, Type&&>>) {
+                f(std::move(value));
+                co_return;
+            } else {
+                co_return f(std::move(value));
+            }
+        }
+    }
+
+    template<typename Type>
+    template<detail::invocable_with<Type&&> Func>
+    inline auto task_value<Type>::then(Func&& func)
+    {
+        using F = std::decay_t<Func>;
+        return detail::then_impl<Type>(handle, F(std::forward<Func>(func)));
     }
 
 }

@@ -6,9 +6,23 @@
 #include <functional>
 #include <exception>
 #include <condition_variable>
+#include <type_traits>
+#include <concepts>
 
 namespace async
 {
+    struct task_void;
+    template<typename Type> struct task_value;
+
+    namespace detail
+    {
+        template<typename R>
+        using then_task_t = std::conditional_t<std::is_void_v<R>, task_void, task_value<R>>;
+
+        template<typename Func, typename... Args>
+        concept invocable_with = std::invocable<Func, Args...>;
+    }
+
     struct promise_base
     {
     public:
